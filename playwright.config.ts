@@ -32,7 +32,7 @@ export default defineConfig({
   // Shared settings for all projects
   use: {
     // Base URL for navigation - can be overridden via environment variable
-    baseURL: process.env.BASE_URL || 'https://demo.playwright.dev/todomvc',
+    baseURL: process.env.BASE_URL || 'https://demo.playwright.dev/todomvc/',
 
     // Collect trace when retrying failed tests
     trace: 'on-first-retry',
