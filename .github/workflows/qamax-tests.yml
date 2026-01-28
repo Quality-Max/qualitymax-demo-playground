@@ -1,0 +1,234 @@
+name: QualityMax Test Suite
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Test suite to run'
+        required: false
+        default: 'smoke'
+        type: choice
+        options:
+          - all
+          - smoke
+          - regression
+          - custom
+      browser:
+        description: 'Browser to use'
+        required: false
+        default: 'chromium'
+        type: choice
+        options:
+          - chromium
+          - firefox
+          - webkit
+      base_url:
+        description: 'Base URL for tests (leave empty for default)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+env:
+  # Default base URL - override with workflow_dispatch input or environment variable
+  BASE_URL: ${{ inputs.base_url || vars.QAMAX_BASE_URL || 'https://demo.playwright.dev/todomvc' }}
+
+jobs:
+  test:
+    name: Run QualityMax Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run QualityMax Tests
+        id: qamax-tests
+        env:
+          QAMAX_API_KEY: ${{ secrets.QAMAX_API_KEY }}
+          QAMAX_PROJECT_ID: ${{ vars.QAMAX_PROJECT_ID }}
+        run: |
+          # Determine suite and browser from inputs or defaults
+          SUITE="${{ inputs.suite || 'smoke' }}"
+          BROWSER="${{ inputs.browser || 'chromium' }}"
+
+          echo "Running QualityMax tests..."
+          echo "Suite: $SUITE"
+          echo "Browser: $BROWSER"
+          echo "Base URL: $BASE_URL"
+
+          # Call QualityMax API to start test execution
+          RESPONSE=$(curl -s -X POST "https://app.qamax.co/api/github-action/execute" \
+            -H "Authorization: Bearer $QAMAX_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"project_id\": \"$QAMAX_PROJECT_ID\",
+              \"suite\": \"$SUITE\",
+              \"browser\": \"$BROWSER\",
+              \"base_url\": \"$BASE_URL\",
+              \"github_context\": {
+                \"repository\": \"${{ github.repository }}\",
+                \"ref\": \"${{ github.ref }}\",
+                \"sha\": \"${{ github.sha }}\",
+                \"event_name\": \"${{ github.event_name }}\",
+                \"run_id\": \"${{ github.run_id }}\",
+                \"run_number\": \"${{ github.run_number }}\",
+                \"actor\": \"${{ github.actor }}\"
+              }
+            }")
+
+          echo "Response: $RESPONSE"
+
+          # Extract execution ID
+          EXECUTION_ID=$(echo $RESPONSE | jq -r '.execution_id // empty')
+
+          if [ -z "$EXECUTION_ID" ]; then
+            echo "Error: Failed to start test execution"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+          echo "execution_id=$EXECUTION_ID" >> $GITHUB_OUTPUT
+          echo "Started execution: $EXECUTION_ID"
+
+          # Poll for completion
+          MAX_WAIT=1800  # 30 minutes
+          WAIT_INTERVAL=10
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            STATUS_RESPONSE=$(curl -s "https://app.qamax.co/api/github-action/status/$EXECUTION_ID" \
+              -H "Authorization: Bearer $QAMAX_API_KEY")
+
+            STATUS=$(echo $STATUS_RESPONSE | jq -r '.status // "unknown"')
+            PROGRESS=$(echo $STATUS_RESPONSE | jq -r '.progress // 0')
+
+            echo "Status: $STATUS | Progress: $PROGRESS%"
+
+            if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ] || [ "$STATUS" = "cancelled" ]; then
+              break
+            fi
+
+            sleep $WAIT_INTERVAL
+            ELAPSED=$((ELAPSED + WAIT_INTERVAL))
+          done
+
+          # Get final results
+          RESULTS=$(curl -s "https://app.qamax.co/api/github-action/results/$EXECUTION_ID" \
+            -H "Authorization: Bearer $QAMAX_API_KEY")
+
+          echo "results<<EOF" >> $GITHUB_OUTPUT
+          echo "$RESULTS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # Check if tests passed
+          RESULT=$(echo $RESULTS | jq -r '.result // "unknown"')
+          PASSED=$(echo $RESULTS | jq -r '.passed_tests // 0')
+          TOTAL=$(echo $RESULTS | jq -r '.total_tests // 0')
+
+          echo "Test Results: $PASSED/$TOTAL passed"
+
+          if [ "$RESULT" != "passed" ]; then
+            echo "Tests failed or did not complete successfully"
+            exit 1
+          fi
+
+      - name: Post PR Comment
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const results = JSON.parse(`${{ steps.qamax-tests.outputs.results || '{}' }}`);
+            const executionId = '${{ steps.qamax-tests.outputs.execution_id }}';
+
+            const status = results.result === 'passed' ? 'Passed' : 'Failed';
+            const statusEmoji = results.result === 'passed' ? ':white_check_mark:' : ':x:';
+            const passed = results.passed_tests || 0;
+            const total = results.total_tests || 0;
+            const duration = results.duration_seconds
+              ? `${Math.floor(results.duration_seconds / 60)}m ${Math.round(results.duration_seconds % 60)}s`
+              : 'N/A';
+            const browser = results.browser || 'chromium';
+
+            let failedTestsSection = '';
+            if (results.result === 'failed' && results.tests) {
+              const failedTests = results.tests.filter(t => t.status === 'failed');
+              if (failedTests.length > 0) {
+                failedTestsSection = '\n\n### Failed Tests\n\n';
+                failedTests.forEach(test => {
+                  failedTestsSection += `- **${test.test_name}**: ${test.error_message || 'Unknown error'}\n`;
+                });
+              }
+            }
+
+            const body = `## ${statusEmoji} QualityMax Test Results
+
+            | Metric | Value |
+            |--------|-------|
+            | **Status** | ${status} |
+            | **Tests** | ${passed}/${total} |
+            | **Duration** | ${duration} |
+            | **Browser** | ${browser.charAt(0).toUpperCase() + browser.slice(1)} |
+            ${failedTestsSection}
+            ---
+
+            [:bar_chart: View Full Report](https://app.qamax.co/results/${executionId}) | [:page_facing_up: View Logs](https://app.qamax.co/results/${executionId}/logs)
+
+            <sub>Powered by [QualityMax](https://qamax.co) - AI-Powered Test Automation</sub>`;
+
+            // Find existing comment or create new one
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.body.includes('QualityMax Test Results')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qamax-test-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 30

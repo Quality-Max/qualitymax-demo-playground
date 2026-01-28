@@ -1,0 +1,31 @@
+{
+  "name": "qamax-demo-playground",
+  "version": "1.0.0",
+  "description": "QualityMax GitHub Actions Demo Playground - Sample Playwright tests for CI/CD integration",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "test:debug": "playwright test --debug",
+    "test:smoke": "playwright test --grep @smoke",
+    "test:regression": "playwright test --grep @regression",
+    "report": "playwright show-report"
+  },
+  "keywords": [
+    "playwright",
+    "testing",
+    "e2e",
+    "qualitymax",
+    "automation",
+    "github-actions"
+  ],
+  "author": "QualityMax",
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.41.0",
+    "@types/node": "^20.11.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
