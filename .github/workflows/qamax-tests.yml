@@ -7,6 +7,16 @@ on:
     branches: [main, master]
   workflow_dispatch:
     inputs:
+      suite:
+        description: 'Test suite to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - smoke
+          - regression
+          - custom
       browser:
         description: 'Browser to use'
         required: false
@@ -27,13 +37,14 @@ permissions:
   checks: write
 
 env:
-  BASE_URL: ${{ inputs.base_url || vars.QAMAX_BASE_URL || 'https://demo.playwright.dev/todomvc' }}
+  # Default base URL - override with workflow_dispatch input or environment variable
+  BASE_URL: ${{ inputs.base_url || vars.QAMAX_BASE_URL || '' }}
 
 jobs:
   test:
-    name: Run Playwright Tests
+    name: Run QualityMax Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -51,88 +62,204 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps ${{ inputs.browser || 'chromium' }}
 
-      - name: Run Playwright tests
-        id: playwright
+      - name: Run QualityMax Tests
+        id: qamax-tests
         env:
-          BASE_URL: ${{ env.BASE_URL }}
+          QAMAX_API_KEY: ${{ secrets.QAMAX_API_KEY }}
+          QAMAX_PROJECT_ID: ${{ vars.QAMAX_PROJECT_ID || '69' }}
         run: |
+          # Determine suite and browser from inputs or defaults
+          SUITE="${{ inputs.suite || 'all' }}"
           BROWSER="${{ inputs.browser || 'chromium' }}"
 
-          echo "::group::Test Configuration"
+          echo "Running QualityMax tests..."
+          echo "Suite: $SUITE"
           echo "Browser: $BROWSER"
           echo "Base URL: $BASE_URL"
-          echo "::endgroup::"
 
-          # Run tests and capture output
-          set +e
-          npx playwright test --project=$BROWSER --reporter=list 2>&1 | tee test-output.txt
-          TEST_EXIT_CODE=${PIPESTATUS[0]}
-          set -e
+          # Call QualityMax API to start test execution
+          RESPONSE=$(curl -s -X POST "https://app.qamax.co/api/github-action/trigger" \
+            -H "X-API-Key: $QAMAX_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"project_id\": \"$QAMAX_PROJECT_ID\",
+              \"test_suite\": \"$SUITE\",
+              \"browser\": \"$BROWSER\",
+              \"github_context\": {
+                \"repository\": \"${{ github.repository }}\",
+                \"ref\": \"${{ github.ref }}\",
+                \"sha\": \"${{ github.sha }}\",
+                \"run_id\": \"${{ github.run_id }}\"
+              }
+            }")
 
-          # Parse results from playwright output
-          PASSED=$(grep -oP '\d+(?= passed)' test-output.txt | tail -1 || echo "0")
-          FAILED=$(grep -oP '\d+(?= failed)' test-output.txt | tail -1 || echo "0")
-          SKIPPED=$(grep -oP '\d+(?= skipped)' test-output.txt | tail -1 || echo "0")
+          echo "Response: $RESPONSE"
 
-          # Default to 0 if empty
-          PASSED=${PASSED:-0}
-          FAILED=${FAILED:-0}
-          SKIPPED=${SKIPPED:-0}
-          TOTAL=$((PASSED + FAILED + SKIPPED))
+          # Check if tests should run locally
+          RUN_LOCALLY=$(echo $RESPONSE | jq -r '.run_locally // false')
+          TEST_COMMAND=$(echo $RESPONSE | jq -r '.test_command // empty')
+          EXECUTION_ID=$(echo $RESPONSE | jq -r '.execution_id // empty')
 
-          echo "passed=$PASSED" >> $GITHUB_OUTPUT
-          echo "failed=$FAILED" >> $GITHUB_OUTPUT
-          echo "skipped=$SKIPPED" >> $GITHUB_OUTPUT
-          echo "total=$TOTAL" >> $GITHUB_OUTPUT
-          echo "exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
-          echo "browser=$BROWSER" >> $GITHUB_OUTPUT
+          echo "execution_id=$EXECUTION_ID" >> $GITHUB_OUTPUT
 
-          echo ""
-          echo "========================================"
-          echo "  Test Results"
-          echo "========================================"
-          echo "  Passed:  $PASSED"
-          echo "  Failed:  $FAILED"
-          echo "  Skipped: $SKIPPED"
-          echo "  Total:   $TOTAL"
-          echo "========================================"
+          if [ "$RUN_LOCALLY" = "true" ]; then
+            echo "Running tests locally from repository..."
+            echo "Command: $TEST_COMMAND"
 
-          exit $TEST_EXIT_CODE
+            # Run tests locally
+            set +e
+            if [ -n "$TEST_COMMAND" ]; then
+              eval "$TEST_COMMAND" 2>&1 | tee test-output.txt
+            else
+              npx playwright test 2>&1 | tee test-output.txt
+            fi
+            TEST_EXIT_CODE=$?
+            set -e
+
+            # Parse results from playwright output
+            PASSED=$(grep -oP '\d+(?= passed)' test-output.txt | tail -1 || echo "0")
+            FAILED=$(grep -oP '\d+(?= failed)' test-output.txt | tail -1 || echo "0")
+            SKIPPED=$(grep -oP '\d+(?= skipped)' test-output.txt | tail -1 || echo "0")
+
+            PASSED=${PASSED:-0}
+            FAILED=${FAILED:-0}
+            SKIPPED=${SKIPPED:-0}
+            TOTAL=$((PASSED + FAILED + SKIPPED))
+
+            # Build results JSON for PR comment
+            if [ $TEST_EXIT_CODE -eq 0 ]; then
+              RESULT="passed"
+            else
+              RESULT="failed"
+            fi
+
+            RESULTS=$(cat <<JSONEOF
+            {
+              "result": "$RESULT",
+              "passed_tests": $PASSED,
+              "failed_tests": $FAILED,
+              "total_tests": $TOTAL,
+              "browser": "$BROWSER",
+              "run_locally": true
+            }
+          JSONEOF
+            )
+
+            echo "results<<EOF" >> $GITHUB_OUTPUT
+            echo "$RESULTS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+
+            echo "Test Results: $PASSED/$TOTAL passed (local execution)"
+
+            # Report results back to QualityMax
+            curl -s -X POST "https://app.qamax.co/api/github-action/report/$EXECUTION_ID" \
+              -H "X-API-Key: $QAMAX_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"result\": \"$RESULT\",
+                \"passed_tests\": $PASSED,
+                \"failed_tests\": $FAILED,
+                \"total_tests\": $TOTAL
+              }" || true
+
+            exit $TEST_EXIT_CODE
+          fi
+
+          # Remote execution mode
+          if [ -z "$EXECUTION_ID" ]; then
+            echo "Error: Failed to start test execution"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+          echo "Started execution: $EXECUTION_ID"
+
+          # Poll for completion
+          MAX_WAIT=1800  # 30 minutes
+          WAIT_INTERVAL=10
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            STATUS_RESPONSE=$(curl -s "https://app.qamax.co/api/github-action/status/$EXECUTION_ID" \
+              -H "X-API-Key: $QAMAX_API_KEY")
+
+            STATUS=$(echo $STATUS_RESPONSE | jq -r '.status // "unknown"')
+            PROGRESS=$(echo $STATUS_RESPONSE | jq -r '.progress // 0')
+
+            echo "Status: $STATUS | Progress: $PROGRESS%"
+
+            if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ] || [ "$STATUS" = "cancelled" ]; then
+              break
+            fi
+
+            sleep $WAIT_INTERVAL
+            ELAPSED=$((ELAPSED + WAIT_INTERVAL))
+          done
+
+          # Get final results
+          RESULTS=$(curl -s "https://app.qamax.co/api/github-action/results/$EXECUTION_ID" \
+            -H "X-API-Key: $QAMAX_API_KEY")
+
+          echo "results<<EOF" >> $GITHUB_OUTPUT
+          echo "$RESULTS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # Check if tests passed
+          RESULT=$(echo $RESULTS | jq -r '.result // "unknown"')
+          PASSED=$(echo $RESULTS | jq -r '.passed_tests // 0')
+          TOTAL=$(echo $RESULTS | jq -r '.total_tests // 0')
+
+          echo "Test Results: $PASSED/$TOTAL passed"
+
+          if [ "$RESULT" != "passed" ]; then
+            echo "Tests failed or did not complete successfully"
+            exit 1
+          fi
 
       - name: Post PR Comment
         if: github.event_name == 'pull_request' && always()
         uses: actions/github-script@v7
         with:
           script: |
-            const passed = parseInt('${{ steps.playwright.outputs.passed }}') || 0;
-            const failed = parseInt('${{ steps.playwright.outputs.failed }}') || 0;
-            const skipped = parseInt('${{ steps.playwright.outputs.skipped }}') || 0;
-            const total = parseInt('${{ steps.playwright.outputs.total }}') || 0;
-            const browser = '${{ steps.playwright.outputs.browser }}' || 'chromium';
-            const exitCode = '${{ steps.playwright.outputs.exit_code }}';
+            const results = JSON.parse(`${{ steps.qamax-tests.outputs.results || '{}' }}`);
+            const executionId = '${{ steps.qamax-tests.outputs.execution_id }}';
 
-            const status = exitCode === '0' ? 'Passed' : 'Failed';
-            const statusEmoji = exitCode === '0' ? '✅' : '❌';
+            const status = results.result === 'passed' ? 'Passed' : 'Failed';
+            const statusEmoji = results.result === 'passed' ? ':white_check_mark:' : ':x:';
+            const passed = results.passed_tests || 0;
+            const total = results.total_tests || 0;
+            const duration = results.duration_seconds
+              ? `${Math.floor(results.duration_seconds / 60)}m ${Math.round(results.duration_seconds % 60)}s`
+              : 'N/A';
+            const browser = results.browser || 'chromium';
 
-            const body = [
-              `## ${statusEmoji} Playwright Test Results`,
-              '',
-              '| Metric | Value |',
-              '|--------|-------|',
-              `| **Status** | ${status} |`,
-              `| **Passed** | ${passed} |`,
-              `| **Failed** | ${failed} |`,
-              `| **Skipped** | ${skipped} |`,
-              `| **Total** | ${total} |`,
-              `| **Browser** | ${browser.charAt(0).toUpperCase() + browser.slice(1)} |`,
-              '',
-              '---',
-              '',
-              `[:page_facing_up: View Workflow Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
-              '',
-              '<sub>Powered by [QualityMax](https://qamax.co)</sub>'
-            ].join('\n');
+            let failedTestsSection = '';
+            if (results.result === 'failed' && results.tests) {
+              const failedTests = results.tests.filter(t => t.status === 'failed');
+              if (failedTests.length > 0) {
+                failedTestsSection = '\n\n### Failed Tests\n\n';
+                failedTests.forEach(test => {
+                  failedTestsSection += `- **${test.test_name}**: ${test.error_message || 'Unknown error'}\n`;
+                });
+              }
+            }
 
+            const body = `## ${statusEmoji} QualityMax Test Results
+
+            | Metric | Value |
+            |--------|-------|
+            | **Status** | ${status} |
+            | **Tests** | ${passed}/${total} |
+            | **Duration** | ${duration} |
+            | **Browser** | ${browser.charAt(0).toUpperCase() + browser.slice(1)} |
+            ${failedTestsSection}
+            ---
+
+            [:bar_chart: View Full Report](https://app.qamax.co/results/${executionId}) | [:page_facing_up: View Logs](https://app.qamax.co/results/${executionId}/logs)
+
+            <sub>Powered by [QualityMax](https://qamax.co) - AI-Powered Test Automation</sub>`;
+
+            // Find existing comment or create new one
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -140,7 +267,7 @@ jobs:
             });
 
             const botComment = comments.find(comment =>
-              comment.body.includes('Playwright Test Results')
+              comment.body.includes('QualityMax Test Results')
             );
 
             if (botComment) {
@@ -163,8 +290,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: qamax-test-results
           path: |
-            playwright-report/
             test-results/
+            playwright-report/
           retention-days: 30
