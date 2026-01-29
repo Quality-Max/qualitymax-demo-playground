@@ -65,21 +65,19 @@ jobs:
 
           # Run tests and capture output
           set +e
-          npx playwright test --project=$BROWSER --reporter=json,list 2>&1 | tee test-output.txt
+          npx playwright test --project=$BROWSER --reporter=list 2>&1 | tee test-output.txt
           TEST_EXIT_CODE=${PIPESTATUS[0]}
           set -e
 
-          # Parse JSON results if available
-          if [ -f test-results/.last-run.json ]; then
-            RESULTS=$(cat test-results/.last-run.json 2>/dev/null || echo '{}')
-          else
-            RESULTS='{}'
-          fi
+          # Parse results from playwright output
+          PASSED=$(grep -oP '\d+(?= passed)' test-output.txt | tail -1 || echo "0")
+          FAILED=$(grep -oP '\d+(?= failed)' test-output.txt | tail -1 || echo "0")
+          SKIPPED=$(grep -oP '\d+(?= skipped)' test-output.txt | tail -1 || echo "0")
 
-          # Try to get stats from playwright output
-          PASSED=$(grep -oP '(\d+) passed' test-output.txt | head -1 | grep -oP '\d+' || echo "0")
-          FAILED=$(grep -oP '(\d+) failed' test-output.txt | head -1 | grep -oP '\d+' || echo "0")
-          SKIPPED=$(grep -oP '(\d+) skipped' test-output.txt | head -1 | grep -oP '\d+' || echo "0")
+          # Default to 0 if empty
+          PASSED=${PASSED:-0}
+          FAILED=${FAILED:-0}
+          SKIPPED=${SKIPPED:-0}
           TOTAL=$((PASSED + FAILED + SKIPPED))
 
           echo "passed=$PASSED" >> $GITHUB_OUTPUT
@@ -101,41 +99,6 @@ jobs:
 
           exit $TEST_EXIT_CODE
 
-      - name: Report to QualityMax
-        if: always() && env.QAMAX_API_KEY != ''
-        env:
-          QAMAX_API_KEY: ${{ secrets.QAMAX_API_KEY }}
-        run: |
-          # Report test results to QualityMax (optional - for tracking)
-          echo "Reporting results to QualityMax..."
-
-          PASSED="${{ steps.playwright.outputs.passed }}"
-          FAILED="${{ steps.playwright.outputs.failed }}"
-          TOTAL="${{ steps.playwright.outputs.total }}"
-          BROWSER="${{ steps.playwright.outputs.browser }}"
-          EXIT_CODE="${{ steps.playwright.outputs.exit_code }}"
-
-          RESULT="passed"
-          if [ "$EXIT_CODE" != "0" ]; then
-            RESULT="failed"
-          fi
-
-          # Report to QualityMax API (future endpoint)
-          curl -s --max-time 10 -X POST "https://app.qamax.co/api/github-action/report" \
-            -H "X-API-Key: $QAMAX_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"repository\": \"${{ github.repository }}\",
-              \"ref\": \"${{ github.ref }}\",
-              \"sha\": \"${{ github.sha }}\",
-              \"run_id\": \"${{ github.run_id }}\",
-              \"result\": \"$RESULT\",
-              \"passed_tests\": $PASSED,
-              \"failed_tests\": $FAILED,
-              \"total_tests\": $TOTAL,
-              \"browser\": \"$BROWSER\"
-            }" || echo "::warning::Could not report to QualityMax (endpoint may not exist yet)"
-
       - name: Post PR Comment
         if: github.event_name == 'pull_request' && always()
         uses: actions/github-script@v7
@@ -149,24 +112,26 @@ jobs:
             const exitCode = '${{ steps.playwright.outputs.exit_code }}';
 
             const status = exitCode === '0' ? 'Passed' : 'Failed';
-            const statusEmoji = exitCode === '0' ? ':white_check_mark:' : ':x:';
+            const statusEmoji = exitCode === '0' ? '✅' : '❌';
 
-            const body = `## ${statusEmoji} Playwright Test Results
-
-| Metric | Value |
-|--------|-------|
-| **Status** | ${status} |
-| **Passed** | ${passed} |
-| **Failed** | ${failed} |
-| **Skipped** | ${skipped} |
-| **Total** | ${total} |
-| **Browser** | ${browser.charAt(0).toUpperCase() + browser.slice(1)} |
-
----
-
-[:page_facing_up: View Workflow Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-<sub>Powered by [QualityMax](https://qamax.co)</sub>`;
+            const body = [
+              `## ${statusEmoji} Playwright Test Results`,
+              '',
+              '| Metric | Value |',
+              '|--------|-------|',
+              `| **Status** | ${status} |`,
+              `| **Passed** | ${passed} |`,
+              `| **Failed** | ${failed} |`,
+              `| **Skipped** | ${skipped} |`,
+              `| **Total** | ${total} |`,
+              `| **Browser** | ${browser.charAt(0).toUpperCase() + browser.slice(1)} |`,
+              '',
+              '---',
+              '',
+              `[:page_facing_up: View Workflow Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
+              '',
+              '<sub>Powered by [QualityMax](https://qamax.co)</sub>'
+            ].join('\n');
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
