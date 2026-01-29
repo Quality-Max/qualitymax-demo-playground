@@ -76,6 +76,9 @@ jobs:
           echo "Suite: $SUITE"
           echo "Browser: $BROWSER"
           echo "Base URL: $BASE_URL"
+          echo "API Key set: ${QAMAX_API_KEY:+yes}"
+          echo "API Key length: ${#QAMAX_API_KEY}"
+          echo "Project ID: $QAMAX_PROJECT_ID"
 
           # Call QualityMax API to start test execution
           RESPONSE=$(curl -s -X POST "https://app.qamax.co/api/github-action/trigger" \
