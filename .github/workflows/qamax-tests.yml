@@ -16,6 +16,7 @@ on:
           - all
           - smoke
           - regression
+          - custom
       browser:
         description: 'Browser to use'
         required: false
@@ -36,290 +37,162 @@ permissions:
   checks: write
 
 env:
+  # Default base URL - override with workflow_dispatch input or environment variable
   BASE_URL: ${{ inputs.base_url || vars.QAMAX_BASE_URL || '' }}
 
 jobs:
   test:
     name: Run QualityMax Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
-      - name: Validate configuration
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps ${{ inputs.browser || 'chromium' }}
+
+      - name: Run QualityMax Tests
+        id: qamax-tests
         env:
           QAMAX_API_KEY: ${{ secrets.QAMAX_API_KEY }}
+          QAMAX_PROJECT_ID: ${{ vars.QAMAX_PROJECT_ID || '69' }}
         run: |
-          if [ -z "$QAMAX_API_KEY" ]; then
-            echo "::error::QAMAX_API_KEY secret is not set. Add it in repository Settings > Secrets > Actions"
-            exit 1
-          fi
-          echo "Configuration validated"
-
-      - name: Resolve project ID
-        id: resolve
-        env:
-          QAMAX_API_KEY: ${{ secrets.QAMAX_API_KEY }}
-          QAMAX_PROJECT_ID: ${{ vars.QAMAX_PROJECT_ID }}
-        run: |
-          # Use explicit project ID if set, otherwise auto-resolve from repository
-          if [ -n "$QAMAX_PROJECT_ID" ]; then
-            echo "project_id=$QAMAX_PROJECT_ID" >> $GITHUB_OUTPUT
-            echo "Using configured project ID: $QAMAX_PROJECT_ID"
-          else
-            echo "Auto-resolving project ID for ${{ github.repository }}..."
-            RESPONSE=$(curl -s --max-time 10 \
-              "https://app.qamax.co/api/github-action/resolve-project?repository=${{ github.repository }}" \
-              -H "X-API-Key: $QAMAX_API_KEY")
-
-            FOUND=$(echo "$RESPONSE" | jq -r '.found // false')
-            PROJECT_ID=$(echo "$RESPONSE" | jq -r '.project_id // empty')
-
-            if [ "$FOUND" != "true" ] || [ -z "$PROJECT_ID" ]; then
-              echo "::error::Could not auto-resolve project ID. Either set QAMAX_PROJECT_ID variable or import this repository into a QualityMax project."
-              echo "Response: $RESPONSE"
-              exit 1
-            fi
-
-            echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
-            echo "Auto-resolved project ID: $PROJECT_ID"
-          fi
-
-      - name: Trigger QualityMax Tests
-        id: trigger
-        env:
-          QAMAX_API_KEY: ${{ secrets.QAMAX_API_KEY }}
-          QAMAX_PROJECT_ID: ${{ steps.resolve.outputs.project_id }}
-        run: |
+          # Determine suite and browser from inputs or defaults
           SUITE="${{ inputs.suite || 'all' }}"
           BROWSER="${{ inputs.browser || 'chromium' }}"
 
-          echo "::group::Test Configuration"
+          echo "Running QualityMax tests..."
           echo "Suite: $SUITE"
           echo "Browser: $BROWSER"
-          echo "Base URL: ${BASE_URL:-'(project default)'}"
-          echo "Project ID: $QAMAX_PROJECT_ID"
-          echo "::endgroup::"
+          echo "Base URL: $BASE_URL"
 
-          # Build request body
-          REQUEST_BODY=$(jq -n \
-            --arg project_id "$QAMAX_PROJECT_ID" \
-            --arg test_suite "$SUITE" \
-            --arg browser "$BROWSER" \
-            --arg base_url "$BASE_URL" \
-            --arg repo "${{ github.repository }}" \
-            --arg ref "${{ github.ref }}" \
-            --arg sha "${{ github.sha }}" \
-            --arg run_id "${{ github.run_id }}" \
-            '{
-              project_id: $project_id,
-              test_suite: $test_suite,
-              browser: $browser,
-              base_url: (if $base_url == "" then null else $base_url end),
-              github_context: {
-                repository: $repo,
-                ref: $ref,
-                sha: $sha,
-                run_id: $run_id
-              }
-            }')
-
-          # Trigger test execution (5s timeout for API call)
-          RESPONSE=$(curl -s --max-time 30 -X POST "https://app.qamax.co/api/github-action/trigger" \
+          # Call QualityMax API to start test execution
+          RESPONSE=$(curl -s -X POST "https://app.qamax.co/api/github-action/trigger" \
             -H "X-API-Key: $QAMAX_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "$REQUEST_BODY")
+            -d "{
+              \"project_id\": \"$QAMAX_PROJECT_ID\",
+              \"test_suite\": \"$SUITE\",
+              \"browser\": \"$BROWSER\",
+              \"github_context\": {
+                \"repository\": \"${{ github.repository }}\",
+                \"ref\": \"${{ github.ref }}\",
+                \"sha\": \"${{ github.sha }}\",
+                \"run_id\": \"${{ github.run_id }}\"
+              }
+            }")
 
-          # Check for curl failure
-          if [ $? -ne 0 ]; then
-            echo "::error::Failed to connect to QualityMax API"
-            exit 1
-          fi
+          echo "Response: $RESPONSE"
 
-          # Parse response
-          SUCCESS=$(echo "$RESPONSE" | jq -r '.success // false')
-          EXECUTION_ID=$(echo "$RESPONSE" | jq -r '.execution_id // empty')
-          MESSAGE=$(echo "$RESPONSE" | jq -r '.message // "Unknown error"')
+          # Extract execution ID
+          EXECUTION_ID=$(echo $RESPONSE | jq -r '.execution_id // empty')
 
-          if [ "$SUCCESS" != "true" ]; then
-            echo "::error::$MESSAGE"
+          if [ -z "$EXECUTION_ID" ]; then
+            echo "Error: Failed to start test execution"
             echo "Response: $RESPONSE"
             exit 1
           fi
 
-          if [ -z "$EXECUTION_ID" ]; then
-            echo "::error::No execution ID returned"
-            exit 1
-          fi
-
           echo "execution_id=$EXECUTION_ID" >> $GITHUB_OUTPUT
-          echo "Execution started: $EXECUTION_ID"
+          echo "Started execution: $EXECUTION_ID"
 
-      - name: Wait for completion
-        id: wait
-        env:
-          QAMAX_API_KEY: ${{ secrets.QAMAX_API_KEY }}
-        run: |
-          EXECUTION_ID="${{ steps.trigger.outputs.execution_id }}"
-          MAX_WAIT=600  # 10 minutes max
-          POLL_INTERVAL=5
+          # Poll for completion
+          MAX_WAIT=1800  # 30 minutes
+          WAIT_INTERVAL=10
           ELAPSED=0
-          CONSECUTIVE_ERRORS=0
-          MAX_ERRORS=3
-
-          echo "Waiting for execution $EXECUTION_ID to complete..."
 
           while [ $ELAPSED -lt $MAX_WAIT ]; do
-            RESPONSE=$(curl -s --max-time 10 "https://app.qamax.co/api/github-action/status/$EXECUTION_ID" \
+            STATUS_RESPONSE=$(curl -s "https://app.qamax.co/api/github-action/status/$EXECUTION_ID" \
               -H "X-API-Key: $QAMAX_API_KEY")
 
-            if [ $? -ne 0 ]; then
-              CONSECUTIVE_ERRORS=$((CONSECUTIVE_ERRORS + 1))
-              if [ $CONSECUTIVE_ERRORS -ge $MAX_ERRORS ]; then
-                echo "::error::Lost connection to QualityMax API"
-                exit 1
-              fi
-              echo "::warning::API request failed, retrying..."
-              sleep $POLL_INTERVAL
-              ELAPSED=$((ELAPSED + POLL_INTERVAL))
-              continue
+            STATUS=$(echo $STATUS_RESPONSE | jq -r '.status // "unknown"')
+            PROGRESS=$(echo $STATUS_RESPONSE | jq -r '.progress // 0')
+
+            echo "Status: $STATUS | Progress: $PROGRESS%"
+
+            if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ] || [ "$STATUS" = "cancelled" ]; then
+              break
             fi
 
-            CONSECUTIVE_ERRORS=0
-            STATUS=$(echo "$RESPONSE" | jq -r '.status // "unknown"')
-            PROGRESS=$(echo "$RESPONSE" | jq -r '.progress // 0')
-            COMPLETED=$(echo "$RESPONSE" | jq -r '.completed_tests // 0')
-            TOTAL=$(echo "$RESPONSE" | jq -r '.total_tests // 0')
-
-            echo "Status: $STATUS | Progress: $PROGRESS% ($COMPLETED/$TOTAL tests)"
-
-            case "$STATUS" in
-              completed|failed|cancelled|timeout)
-                echo "status=$STATUS" >> $GITHUB_OUTPUT
-                break
-                ;;
-              queued|running)
-                ;;
-              *)
-                echo "::warning::Unknown status: $STATUS"
-                ;;
-            esac
-
-            sleep $POLL_INTERVAL
-            ELAPSED=$((ELAPSED + POLL_INTERVAL))
+            sleep $WAIT_INTERVAL
+            ELAPSED=$((ELAPSED + WAIT_INTERVAL))
           done
 
-          if [ $ELAPSED -ge $MAX_WAIT ]; then
-            echo "::error::Execution timed out after ${MAX_WAIT}s"
-            echo "status=timeout" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-
-      - name: Get results
-        id: results
-        env:
-          QAMAX_API_KEY: ${{ secrets.QAMAX_API_KEY }}
-        run: |
-          EXECUTION_ID="${{ steps.trigger.outputs.execution_id }}"
-
-          RESPONSE=$(curl -s --max-time 30 "https://app.qamax.co/api/github-action/results/$EXECUTION_ID" \
+          # Get final results
+          RESULTS=$(curl -s "https://app.qamax.co/api/github-action/results/$EXECUTION_ID" \
             -H "X-API-Key: $QAMAX_API_KEY")
 
-          if [ $? -ne 0 ]; then
-            echo "::error::Failed to fetch results"
-            exit 1
-          fi
-
-          # Save results for PR comment
           echo "results<<EOF" >> $GITHUB_OUTPUT
-          echo "$RESPONSE" >> $GITHUB_OUTPUT
+          echo "$RESULTS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-          # Parse and display results
-          RESULT=$(echo "$RESPONSE" | jq -r '.result // "unknown"')
-          PASSED=$(echo "$RESPONSE" | jq -r '.passed_tests // 0')
-          FAILED=$(echo "$RESPONSE" | jq -r '.failed_tests // 0')
-          TOTAL=$(echo "$RESPONSE" | jq -r '.total_tests // 0')
-          DURATION=$(echo "$RESPONSE" | jq -r '.duration_seconds // 0')
+          # Check if tests passed
+          RESULT=$(echo $RESULTS | jq -r '.result // "unknown"')
+          PASSED=$(echo $RESULTS | jq -r '.passed_tests // 0')
+          TOTAL=$(echo $RESULTS | jq -r '.total_tests // 0')
 
-          echo ""
-          echo "========================================"
-          echo "  QualityMax Test Results"
-          echo "========================================"
-          echo "  Result:   $RESULT"
-          echo "  Passed:   $PASSED / $TOTAL"
-          echo "  Failed:   $FAILED"
-          echo "  Duration: ${DURATION}s"
-          echo "========================================"
-          echo ""
+          echo "Test Results: $PASSED/$TOTAL passed"
 
-          # Show failed tests if any
-          if [ "$FAILED" -gt 0 ]; then
-            echo "::group::Failed Tests"
-            echo "$RESPONSE" | jq -r '.tests[]? | select(.status == "failed") | "- \(.test_name): \(.error_message // "Unknown error")"'
-            echo "::endgroup::"
-          fi
-
-          # Exit with error if tests failed
           if [ "$RESULT" != "passed" ]; then
-            echo "::error::Tests $RESULT - $FAILED of $TOTAL tests failed"
+            echo "Tests failed or did not complete successfully"
             exit 1
           fi
-
-          echo "All tests passed!"
 
       - name: Post PR Comment
         if: github.event_name == 'pull_request' && always()
         uses: actions/github-script@v7
         with:
           script: |
-            const results = JSON.parse(`${{ steps.results.outputs.results || '{}' }}`);
-            const executionId = '${{ steps.trigger.outputs.execution_id }}';
-
-            if (!executionId) {
-              console.log('No execution ID, skipping PR comment');
-              return;
-            }
+            const results = JSON.parse(`${{ steps.qamax-tests.outputs.results || '{}' }}`);
+            const executionId = '${{ steps.qamax-tests.outputs.execution_id }}';
 
             const status = results.result === 'passed' ? 'Passed' : 'Failed';
             const statusEmoji = results.result === 'passed' ? ':white_check_mark:' : ':x:';
             const passed = results.passed_tests || 0;
             const total = results.total_tests || 0;
-            const failed = results.failed_tests || 0;
             const duration = results.duration_seconds
               ? `${Math.floor(results.duration_seconds / 60)}m ${Math.round(results.duration_seconds % 60)}s`
               : 'N/A';
             const browser = results.browser || 'chromium';
 
             let failedTestsSection = '';
-            if (failed > 0 && results.tests) {
+            if (results.result === 'failed' && results.tests) {
               const failedTests = results.tests.filter(t => t.status === 'failed');
               if (failedTests.length > 0) {
                 failedTestsSection = '\n\n### Failed Tests\n\n';
-                failedTests.slice(0, 10).forEach(test => {
-                  const error = (test.error_message || 'Unknown error').substring(0, 100);
-                  failedTestsSection += `- **${test.test_name}**: ${error}\n`;
+                failedTests.forEach(test => {
+                  failedTestsSection += `- **${test.test_name}**: ${test.error_message || 'Unknown error'}\n`;
                 });
-                if (failedTests.length > 10) {
-                  failedTestsSection += `\n_...and ${failedTests.length - 10} more_\n`;
-                }
               }
             }
 
             const body = `## ${statusEmoji} QualityMax Test Results
 
-| Metric | Value |
-|--------|-------|
-| **Status** | ${status} |
-| **Tests** | ${passed}/${total} |
-| **Duration** | ${duration} |
-| **Browser** | ${browser.charAt(0).toUpperCase() + browser.slice(1)} |
-${failedTestsSection}
----
+            | Metric | Value |
+            |--------|-------|
+            | **Status** | ${status} |
+            | **Tests** | ${passed}/${total} |
+            | **Duration** | ${duration} |
+            | **Browser** | ${browser.charAt(0).toUpperCase() + browser.slice(1)} |
+            ${failedTestsSection}
+            ---
 
-[:bar_chart: View Full Report](https://app.qamax.co/results/${executionId})
+            [:bar_chart: View Full Report](https://app.qamax.co/results/${executionId}) | [:page_facing_up: View Logs](https://app.qamax.co/results/${executionId}/logs)
 
-<sub>Powered by [QualityMax](https://qamax.co)</sub>`;
+            <sub>Powered by [QualityMax](https://qamax.co) - AI-Powered Test Automation</sub>`;
 
+            // Find existing comment or create new one
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -345,3 +218,13 @@ ${failedTestsSection}
                 body: body
               });
             }
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qamax-test-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 30
