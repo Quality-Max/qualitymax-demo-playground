@@ -10,7 +10,7 @@ on:
       suite:
         description: 'Test suite to run'
         required: false
-        default: 'smoke'
+        default: 'all'
         type: choice
         options:
           - all
@@ -38,7 +38,7 @@ permissions:
 
 env:
   # Default base URL - override with workflow_dispatch input or environment variable
-  BASE_URL: ${{ inputs.base_url || vars.QAMAX_BASE_URL || 'https://demo.playwright.dev/todomvc' }}
+  BASE_URL: ${{ inputs.base_url || vars.QAMAX_BASE_URL || '' }}
 
 jobs:
   test:
@@ -60,25 +60,22 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps ${{ inputs.browser || 'chromium' }}
 
       - name: Run QualityMax Tests
         id: qamax-tests
         env:
           QAMAX_API_KEY: ${{ secrets.QAMAX_API_KEY }}
-          QAMAX_PROJECT_ID: ${{ vars.QAMAX_PROJECT_ID }}
+          QAMAX_PROJECT_ID: ${{ vars.QAMAX_PROJECT_ID || '69' }}
         run: |
           # Determine suite and browser from inputs or defaults
-          SUITE="${{ inputs.suite || 'smoke' }}"
+          SUITE="${{ inputs.suite || 'all' }}"
           BROWSER="${{ inputs.browser || 'chromium' }}"
 
           echo "Running QualityMax tests..."
           echo "Suite: $SUITE"
           echo "Browser: $BROWSER"
           echo "Base URL: $BASE_URL"
-          echo "API Key set: ${QAMAX_API_KEY:+yes}"
-          echo "API Key length: ${#QAMAX_API_KEY}"
-          echo "Project ID: $QAMAX_PROJECT_ID"
 
           # Call QualityMax API to start test execution
           RESPONSE=$(curl -s -X POST "https://app.qamax.co/api/github-action/trigger" \
@@ -88,7 +85,6 @@ jobs:
               \"project_id\": \"$QAMAX_PROJECT_ID\",
               \"test_suite\": \"$SUITE\",
               \"browser\": \"$BROWSER\",
-              \"base_url\": \"$BASE_URL\",
               \"github_context\": {
                 \"repository\": \"${{ github.repository }}\",
                 \"ref\": \"${{ github.ref }}\",
