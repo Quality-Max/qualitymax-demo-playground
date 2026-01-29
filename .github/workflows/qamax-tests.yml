@@ -78,22 +78,19 @@ jobs:
           echo "Base URL: $BASE_URL"
 
           # Call QualityMax API to start test execution
-          RESPONSE=$(curl -s -X POST "https://app.qamax.co/api/github-action/execute" \
-            -H "Authorization: Bearer $QAMAX_API_KEY" \
+          RESPONSE=$(curl -s -X POST "https://app.qamax.co/api/github-action/trigger" \
+            -H "X-API-Key: $QAMAX_API_KEY" \
             -H "Content-Type: application/json" \
             -d "{
               \"project_id\": \"$QAMAX_PROJECT_ID\",
-              \"suite\": \"$SUITE\",
+              \"test_suite\": \"$SUITE\",
               \"browser\": \"$BROWSER\",
               \"base_url\": \"$BASE_URL\",
               \"github_context\": {
                 \"repository\": \"${{ github.repository }}\",
                 \"ref\": \"${{ github.ref }}\",
                 \"sha\": \"${{ github.sha }}\",
-                \"event_name\": \"${{ github.event_name }}\",
-                \"run_id\": \"${{ github.run_id }}\",
-                \"run_number\": \"${{ github.run_number }}\",
-                \"actor\": \"${{ github.actor }}\"
+                \"run_id\": \"${{ github.run_id }}\"
               }
             }")
 
@@ -118,7 +115,7 @@ jobs:
 
           while [ $ELAPSED -lt $MAX_WAIT ]; do
             STATUS_RESPONSE=$(curl -s "https://app.qamax.co/api/github-action/status/$EXECUTION_ID" \
-              -H "Authorization: Bearer $QAMAX_API_KEY")
+              -H "X-API-Key: $QAMAX_API_KEY")
 
             STATUS=$(echo $STATUS_RESPONSE | jq -r '.status // "unknown"')
             PROGRESS=$(echo $STATUS_RESPONSE | jq -r '.progress // 0')
@@ -135,7 +132,7 @@ jobs:
 
           # Get final results
           RESULTS=$(curl -s "https://app.qamax.co/api/github-action/results/$EXECUTION_ID" \
-            -H "Authorization: Bearer $QAMAX_API_KEY")
+            -H "X-API-Key: $QAMAX_API_KEY")
 
           echo "results<<EOF" >> $GITHUB_OUTPUT
           echo "$RESULTS" >> $GITHUB_OUTPUT
