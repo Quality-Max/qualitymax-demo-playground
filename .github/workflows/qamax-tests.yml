@@ -48,23 +48,47 @@ jobs:
       - name: Validate configuration
         env:
           QAMAX_API_KEY: ${{ secrets.QAMAX_API_KEY }}
-          QAMAX_PROJECT_ID: ${{ vars.QAMAX_PROJECT_ID }}
         run: |
           if [ -z "$QAMAX_API_KEY" ]; then
             echo "::error::QAMAX_API_KEY secret is not set. Add it in repository Settings > Secrets > Actions"
             exit 1
           fi
-          if [ -z "$QAMAX_PROJECT_ID" ]; then
-            echo "::error::QAMAX_PROJECT_ID variable is not set. Add it in repository Settings > Variables > Actions"
-            exit 1
-          fi
           echo "Configuration validated"
+
+      - name: Resolve project ID
+        id: resolve
+        env:
+          QAMAX_API_KEY: ${{ secrets.QAMAX_API_KEY }}
+          QAMAX_PROJECT_ID: ${{ vars.QAMAX_PROJECT_ID }}
+        run: |
+          # Use explicit project ID if set, otherwise auto-resolve from repository
+          if [ -n "$QAMAX_PROJECT_ID" ]; then
+            echo "project_id=$QAMAX_PROJECT_ID" >> $GITHUB_OUTPUT
+            echo "Using configured project ID: $QAMAX_PROJECT_ID"
+          else
+            echo "Auto-resolving project ID for ${{ github.repository }}..."
+            RESPONSE=$(curl -s --max-time 10 \
+              "https://app.qamax.co/api/github-action/resolve-project?repository=${{ github.repository }}" \
+              -H "X-API-Key: $QAMAX_API_KEY")
+
+            FOUND=$(echo "$RESPONSE" | jq -r '.found // false')
+            PROJECT_ID=$(echo "$RESPONSE" | jq -r '.project_id // empty')
+
+            if [ "$FOUND" != "true" ] || [ -z "$PROJECT_ID" ]; then
+              echo "::error::Could not auto-resolve project ID. Either set QAMAX_PROJECT_ID variable or import this repository into a QualityMax project."
+              echo "Response: $RESPONSE"
+              exit 1
+            fi
+
+            echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
+            echo "Auto-resolved project ID: $PROJECT_ID"
+          fi
 
       - name: Trigger QualityMax Tests
         id: trigger
         env:
           QAMAX_API_KEY: ${{ secrets.QAMAX_API_KEY }}
-          QAMAX_PROJECT_ID: ${{ vars.QAMAX_PROJECT_ID }}
+          QAMAX_PROJECT_ID: ${{ steps.resolve.outputs.project_id }}
         run: |
           SUITE="${{ inputs.suite || 'all' }}"
           BROWSER="${{ inputs.browser || 'chromium' }}"
