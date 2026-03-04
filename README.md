@@ -23,7 +23,7 @@ This playground demonstrates:
 In your GitHub repository:
 1. Go to **Settings** > **Secrets and variables** > **Actions**
 2. Click **New repository secret**
-3. Add `QAMAX_API_KEY` with your API key
+3. Add `QAMAX_API_KEY` with your API key.
 
 ### 3. Add the Workflow
 
