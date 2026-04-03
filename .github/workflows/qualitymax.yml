@@ -1,0 +1,33 @@
+name: QualityMax AI Tests
+
+on:
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  qualitymax:
+    name: Run QualityMax Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run QualityMax Tests
+        uses: Quality-Max/qualitymax-github-action@v1
+        with:
+          api-key: ${{ secrets.QUALITYMAX_API_KEY }}
+          project-name: 'Demo Playground'
+          test-suite: 'all'
+          browser: 'chromium'
+          base-url: 'https://demo.playwright.dev/todomvc'
+          fail-on-test-failure: 'true'
+          post-pr-comment: 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

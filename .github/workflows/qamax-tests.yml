@@ -130,7 +130,7 @@ jobs:
               '',
               `[:page_facing_up: View Workflow Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
               '',
-              '<sub>Powered by [QualityMax](https://qamax.co)</sub>'
+              '<sub>Powered by [QualityMax](https://qualitymax.io)</sub>'
             ].join('\n');
 
             const { data: comments } = await github.rest.issues.listComments({

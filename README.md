@@ -1,119 +1,66 @@
-# QualityMax GitHub Actions Demo Playground
+# QualityMax Demo Playground
 
-This demo repository showcases how to integrate QualityMax test automation with your GitHub CI/CD pipeline.
+Demo repository showcasing QualityMax GitHub Action integration for automated Playwright testing in CI/CD pipelines.
 
 ## Overview
 
 This playground demonstrates:
-- Running QualityMax tests via GitHub Actions
-- Automatic test reporting on pull requests
-- Integration with your existing Playwright tests
-
-## Quick Start
-
-### 1. Get Your API Key
-
-1. Log into [QualityMax](https://app.qamax.co)
-2. Go to **Settings** > **API Keys**
-3. Click **Generate API Key**
-4. Copy your key (it won't be shown again!)
-
-### 2. Configure GitHub Secrets
-
-In your GitHub repository:
-1. Go to **Settings** > **Secrets and variables** > **Actions**
-2. Click **New repository secret**
-3. Add `QAMAX_API_KEY` with your API key.
-
-### 3. Add the Workflow
-
-Copy `.github/workflows/qamax-tests.yml` to your repository.
-
-### 4. Run Tests
-
-Tests will automatically run on:
-- Push to `main` or `master`
-- Pull request events
-- Manual dispatch
+- Running Playwright tests via GitHub Actions
+- Automatic test result comments on pull requests
+- Integration with [QualityMax GitHub Action](https://github.com/Quality-Max/qualitymax-github-action)
 
 ## Project Structure
 
 ```
-demo-playground/
-├── .github/
-│   └── workflows/
-│       └── qamax-tests.yml      # GitHub Actions workflow
-├── tests/
-│   ├── login.spec.ts            # Login test example
-│   ├── navigation.spec.ts       # Navigation test example
-│   └── form-validation.spec.ts  # Form validation example
-├── playwright.config.ts          # Playwright configuration
-├── package.json                  # Dependencies
-└── README.md                     # This file
+.github/workflows/
+  qamax-tests.yml          # Playwright CI workflow
+  qualitymax.yml           # QualityMax AI-powered test runner
+tests/
+  todo-crud.spec.ts        # CRUD operations (add, complete, delete)
+  todo-filters.spec.ts     # Filter functionality (all, active, completed)
+playwright.config.ts       # Playwright configuration
+package.json               # Dependencies
 ```
 
-## Sample Tests
+## Test Suites
 
-### Login Test (`tests/login.spec.ts`)
-Tests basic authentication flow with form submission and validation.
+### Todo CRUD (`tests/todo-crud.spec.ts`)
+Tests basic CRUD operations on the TodoMVC demo app:
+- Add a new todo item
+- Add multiple items
+- Mark todo as completed
+- Delete a todo item
+- Verify input clears after adding
 
-### Navigation Test (`tests/navigation.spec.ts`)
-Tests page navigation, URL changes, and breadcrumb functionality.
+### Todo Filters (`tests/todo-filters.spec.ts`)
+Tests filter and count functionality:
+- Show all todos by default
+- Filter active todos
+- Filter completed todos
+- Update item count on completion
+- Clear completed todos
 
-### Form Validation Test (`tests/form-validation.spec.ts`)
-Tests client-side form validation including required fields and email format.
+## CI/CD Integration
 
-## GitHub Actions Workflow
+### Playwright Tests (built-in)
 
-The workflow (`.github/workflows/qamax-tests.yml`) includes:
+The `qamax-tests.yml` workflow runs Playwright tests directly and posts results as PR comments.
+
+### QualityMax AI Testing
+
+The `qualitymax.yml` workflow uses the [QualityMax GitHub Action](https://github.com/marketplace/actions/qualitymax-e2e-tests) to run AI-powered tests:
 
 ```yaml
 - name: Run QualityMax Tests
-  uses: qualitymax/test-runner@v1
+  uses: Quality-Max/qualitymax-github-action@v1
   with:
-    api_key: ${{ secrets.QAMAX_API_KEY }}
-    project_id: ${{ vars.QAMAX_PROJECT_ID }}
-    suite: smoke  # Options: all, smoke, regression, custom
-    browser: chromium  # Options: chromium, firefox, webkit
-    base_url: ${{ env.DEPLOY_URL }}
-```
-
-### Configuration Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `api_key` | Your QualityMax API key (required) | - |
-| `project_id` | Your QualityMax project ID (required) | - |
-| `suite` | Test suite to run: `all`, `smoke`, `regression`, `custom` | `all` |
-| `browser` | Browser to use: `chromium`, `firefox`, `webkit` | `chromium` |
-| `base_url` | Base URL for tests (e.g., staging URL) | Project default |
-| `timeout` | Test timeout in minutes | `30` |
-| `test_ids` | Specific test IDs (comma-separated, for `custom` suite) | - |
-
-## Test Results
-
-After tests complete:
-- **GitHub Actions UI**: View summary in the Actions tab
-- **PR Comments**: Automatic test result summary posted to pull requests
-- **QualityMax Dashboard**: Detailed results at `app.qamax.co/results/{execution_id}`
-
-### Example PR Comment
-
-```markdown
-## QualityMax Test Results
-
-| Status | Passed | Tests |
-|--------|--------|-------|
-| Passed | 5/5 | 100% |
-
-Duration: 2m 34s | Browser: Chromium
-
-[View Full Report](https://app.qamax.co/results/gha_abc123)
+    api-key: ${{ secrets.QUALITYMAX_API_KEY }}
+    project-name: 'Demo Playground'
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 ## Local Development
-
-Run tests locally:
 
 ```bash
 # Install dependencies
@@ -125,32 +72,30 @@ npx playwright install
 # Run all tests
 npm test
 
-# Run specific test
-npx playwright test tests/login.spec.ts
+# Run smoke tests only
+npm run test:smoke
 
 # Run with UI mode
-npx playwright test --ui
+npm run test:ui
 
 # Run headed (visible browser)
-npx playwright test --headed
+npm run test:headed
 ```
 
-## Troubleshooting
+## Setup for Your Own Project
 
-### Tests Fail with "Invalid API Key"
-- Verify your API key is correct
-- Check that the secret `QAMAX_API_KEY` is set in your repository
-
-### Tests Timeout
-- Increase the `timeout` option in the workflow
-- Check if your `base_url` is accessible from GitHub Actions runners
-
-### No PR Comment Posted
-- Ensure the workflow has `pull-requests: write` permission
-- Check that the GitHub token has the necessary scopes
+1. Get your API key at [app.qualitymax.io](https://app.qualitymax.io) > Settings > API Keys
+2. Add `QUALITYMAX_API_KEY` as a repository secret
+3. Copy `.github/workflows/qualitymax.yml` to your repo
+4. Push and watch tests run automatically
 
 ## Support
 
-- [QualityMax Documentation](https://app.qamax.co/docs)
-- [GitHub Issues](https://github.com/qualitymax/qa-rag-app/issues)
-- Email: support@qamax.co
+- [QualityMax Documentation](https://qualitymax.io)
+- [GitHub Action](https://github.com/Quality-Max/qualitymax-github-action)
+- [Report Issues](https://github.com/Quality-Max/qualitymax-demo-playground/issues)
+- Email: [contact@qualitymax.io](mailto:contact@qualitymax.io)
+
+## License
+
+MIT
