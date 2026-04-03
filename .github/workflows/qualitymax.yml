@@ -22,7 +22,7 @@ jobs:
       - name: Run QualityMax Tests
         uses: Quality-Max/qualitymax-github-action@v1
         with:
-          api-key: ${{ secrets.QAMAX_API_KEY }}
+          api-key: ${{ secrets.QUALITYMAX_API_KEY }}
           project-name: 'Demo Playground'
           test-suite: 'all'
           browser: 'chromium'
