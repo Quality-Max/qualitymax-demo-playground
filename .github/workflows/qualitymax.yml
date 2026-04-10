@@ -13,9 +13,20 @@ permissions:
 
 jobs:
   qualitymax:
-    name: Run QualityMax Tests
+    name: Run QualityMax Tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Matrix sharding: split the suite across 2 parallel runners.
+    # Each shard runs a deterministic slice of the tests via Playwright's
+    # --shard=N/M flag and reports its own results back to QualityMax.
+    #
+    # For a 3-test demo project this is mostly demonstrative — you really
+    # see the wall-clock win at 20+ tests. But it's a simple copy/paste
+    # template for teams with larger suites.
+    strategy:
+      fail-fast: false  # don't cancel other shards if one fails
+      matrix:
+        shard: [1, 2]
 
     steps:
       - name: Checkout code
@@ -29,6 +40,8 @@ jobs:
           test-suite: 'all'
           browser: 'chromium'
           base-url: 'https://demo.playwright.dev/todomvc'
+          shard: ${{ matrix.shard }}
+          shards-total: 2
           fail-on-test-failure: 'true'
           post-pr-comment: 'true'
         env:
