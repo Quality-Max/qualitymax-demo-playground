@@ -1,5 +1,9 @@
 # QualityMax Demo Playground
 
+[Maintained Action](https://github.com/Quality-Max/qualitymax-github-action) · [Integration guide](https://docs.qualitymax.io/code-review-gates/)
+
+This is an integration example, not the QualityMax platform source. Configure your own account, project, and workflow credentials using the maintained Action instructions.
+
 Demo repository showcasing QualityMax GitHub Action integration for automated Playwright testing in CI/CD pipelines.
 
 ## Overview
