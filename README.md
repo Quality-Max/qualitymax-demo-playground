@@ -48,7 +48,7 @@ The `qamax-tests.yml` workflow runs Playwright tests directly and posts results 
 
 ### QualityMax AI Testing
 
-The `qualitymax.yml` workflow uses the [QualityMax GitHub Action](https://github.com/marketplace/actions/qualitymax-e2e-tests) to run AI-powered tests:
+The `qualitymax.yml` workflow uses the [QualityMax GitHub Action](https://github.com/marketplace/actions/qualitymax-test-runner) to run AI-powered tests:
 
 ```yaml
 - name: Run QualityMax Tests
