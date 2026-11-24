@@ -6,28 +6,20 @@ on:
 permissions: {}
 
 jobs:
-  check:
+  seed:
     runs-on: ubuntu-24.04
-    timeout-minutes: 4
+    timeout-minutes: 8
     steps:
-      - name: Check staging project linkage and script count
+      - name: Seed two TodoMVC scripts in the staging demo project
+        uses: Quality-Max/qualitymax-github-action@v1
+        with:
+          api-key: ${{ secrets.QUALITYMAX_API_KEY }}
+          project-id: '449'
+          base-url: https://demo.playwright.dev/todomvc
+          mode: seed
+          max-seed-tests: 2
+          seed-descriptions: |
+            Add a task with Enter and verify the row is visible and the active count is one.
+            Complete one of two tasks and verify the Active and Completed filters show the correct rows.
         env:
-          QUALITYMAX_TOKEN: ${{ secrets.QUALITYMAX_API_KEY }}
-        run: |
-          response="$(mktemp)"
-          trap 'rm -f "$response"' EXIT
-          api=https://pantheon.qualitymax.io/api/github-action
-          get() {
-            curl --silent --show-error --max-time 45 --output "$response" --write-out '%{http_code}' \
-              --user-agent 'QualityMax-GitHub-Action/1.1' \
-              --header "X-API-Key: $QUALITYMAX_TOKEN" "$api/$1"
-          }
-          status="$(get 'resolve-project?repository=Quality-Max%2Fqualitymax-demo-playground')"
-          echo "Staging repo resolution returned HTTP $status."
-          [[ "$status" == 200 ]]
-          project_id="$(jq -er '.project_id | tostring | select(test("^[0-9]+$"))' "$response")"
-          echo "Staging project ID $project_id."
-          status="$(get "projects/$project_id/tests")"
-          echo "Staging script lookup returned HTTP $status."
-          [[ "$status" == 200 ]]
-          jq -er '"Stored scripts: \(.total | numbers)"' "$response"
+          QUALITYMAX_API_URL: https://pantheon.qualitymax.io/api
