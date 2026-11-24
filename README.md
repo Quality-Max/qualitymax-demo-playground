@@ -48,7 +48,7 @@ The `qamax-tests.yml` workflow runs Playwright tests directly and posts results 
 
 ### QualityMax AI Testing
 
-The `qualitymax.yml` workflow uses the [QualityMax GitHub Action](https://github.com/marketplace/actions/qualitymax-e2e-tests) to run AI-powered tests:
+The `qualitymax.yml` workflow uses the [QualityMax GitHub Action](https://github.com/marketplace/actions/qualitymax-test-runner) with two parallel jobs configured for the staging demo project. Use the example below for a project on the production API.
 
 ```yaml
 - name: Run QualityMax Tests
@@ -86,7 +86,7 @@ npm run test:headed
 
 1. Get your API key at [app.qualitymax.io](https://app.qualitymax.io) > Settings > API Keys
 2. Add `QUALITYMAX_API_KEY` as a repository secret
-3. Copy `.github/workflows/qualitymax.yml` to your repo
+3. Add the example above to your workflow and set `project-name` to your project name
 4. Push and watch tests run automatically
 
 ## Support
