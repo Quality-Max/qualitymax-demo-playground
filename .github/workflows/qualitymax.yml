@@ -17,13 +17,7 @@ jobs:
     # The released action uses Playwright 1.49, which supports Ubuntu 24.04.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    # Matrix sharding: split the suite across 2 parallel runners.
-    # Each shard runs a deterministic slice of the tests via Playwright's
-    # --shard=N/M flag and reports its own results back to QualityMax.
-    #
-    # For a 3-test demo project this is mostly demonstrative — you really
-    # see the wall-clock win at 20+ tests. But it's a simple copy/paste
-    # template for teams with larger suites.
+    # Send each parallel runner its Playwright shard number.
     strategy:
       fail-fast: false  # don't cancel other shards if one fails
       matrix:
@@ -36,8 +30,8 @@ jobs:
       - name: Run QualityMax Tests
         uses: Quality-Max/qualitymax-github-action@v1
         with:
-          api-key: ${{ secrets.QUALITYMAX_STAGING_API_KEY }}
-          project-name: 'Demo Playground'
+          api-key: ${{ secrets.QUALITYMAX_API_KEY }}
+          # Resolve the staging project from this linked repository.
           test-suite: 'all'
           browser: 'chromium'
           base-url: 'https://demo.playwright.dev/todomvc'
