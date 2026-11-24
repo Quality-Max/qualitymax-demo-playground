@@ -14,7 +14,8 @@ permissions:
 jobs:
   qualitymax:
     name: Run QualityMax Tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
-    runs-on: ubuntu-latest
+    # The released action uses Playwright 1.49, which supports Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Matrix sharding: split the suite across 2 parallel runners.
     # Each shard runs a deterministic slice of the tests via Playwright's
@@ -35,7 +36,7 @@ jobs:
       - name: Run QualityMax Tests
         uses: Quality-Max/qualitymax-github-action@v1
         with:
-          api-key: ${{ secrets.QUALITYMAX_API_KEY }}
+          api-key: ${{ secrets.QUALITYMAX_STAGING_API_KEY }}
           project-name: 'Demo Playground'
           test-suite: 'all'
           browser: 'chromium'
@@ -45,4 +46,5 @@ jobs:
           fail-on-test-failure: 'true'
           post-pr-comment: 'true'
         env:
+          QUALITYMAX_API_URL: https://pantheon.qualitymax.io/api
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
