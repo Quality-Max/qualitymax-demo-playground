@@ -6,37 +6,28 @@ on:
 permissions: {}
 
 jobs:
-  seed:
+  check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 4
     steps:
-      - name: Resolve the staging demo project by slug
-        id: project
+      - name: Check staging project linkage and script count
         env:
           QUALITYMAX_TOKEN: ${{ secrets.QUALITYMAX_API_KEY }}
         run: |
           response="$(mktemp)"
           trap 'rm -f "$response"' EXIT
-          status="$(curl --silent --show-error --max-time 40 --output "$response" --write-out '%{http_code}' \
-            --header "Authorization: Bearer $QUALITYMAX_TOKEN" \
-            https://pantheon.qualitymax.io/api/projects/by-slug/clay-olive)"
-          if [[ "$status" != 200 ]]; then
-            echo "::error::The staging project lookup returned HTTP $status."
-            exit 1
-          fi
-          project_id="$(jq -er '.project.id | tostring | select(test("^[0-9]+$"))' "$response")"
-          echo "id=$project_id" >> "$GITHUB_OUTPUT"
-          echo "Resolved staging demo project ID $project_id."
-      - name: Generate the two TodoMVC demo scripts
-        uses: Quality-Max/qualitymax-github-action@v1
-        with:
-          api-key: ${{ secrets.QUALITYMAX_API_KEY }}
-          project-id: ${{ steps.project.outputs.id }}
-          base-url: https://demo.playwright.dev/todomvc
-          mode: seed
-          max-seed-tests: 2
-          seed-descriptions: |
-            Add a task with Enter and verify the row is visible and the active count is one.
-            Complete one of two tasks and verify the Active and Completed filters show the correct rows.
-        env:
-          QUALITYMAX_API_URL: https://pantheon.qualitymax.io/api
+          api=https://pantheon.qualitymax.io/api/github-action
+          get() {
+            curl --silent --show-error --max-time 45 --output "$response" --write-out '%{http_code}' \
+              --user-agent 'QualityMax-GitHub-Action/1.1' \
+              --header "X-API-Key: $QUALITYMAX_TOKEN" "$api/$1"
+          }
+          status="$(get 'resolve-project?repository=Quality-Max%2Fqualitymax-demo-playground')"
+          echo "Staging repo resolution returned HTTP $status."
+          [[ "$status" == 200 ]]
+          project_id="$(jq -er '.project_id | tostring | select(test("^[0-9]+$"))' "$response")"
+          echo "Staging project ID $project_id."
+          status="$(get "projects/$project_id/tests")"
+          echo "Staging script lookup returned HTTP $status."
+          [[ "$status" == 200 ]]
+          jq -er '"Stored scripts: \(.total | numbers)"' "$response"
