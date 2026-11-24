@@ -48,7 +48,7 @@ The `qamax-tests.yml` workflow runs Playwright tests directly and posts results 
 
 ### QualityMax AI Testing
 
-The `qualitymax.yml` workflow uses the [QualityMax GitHub Action](https://github.com/marketplace/actions/qualitymax-test-runner) to run tests from the staging demo project in two shards. Use this example for a project on the production API.
+The `qualitymax.yml` workflow uses the [QualityMax GitHub Action](https://github.com/marketplace/actions/qualitymax-test-runner) with two parallel jobs configured for the staging demo project. Use the example below for a project on the production API.
 
 ```yaml
 - name: Run QualityMax Tests

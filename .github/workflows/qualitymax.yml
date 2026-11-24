@@ -31,7 +31,7 @@ jobs:
         uses: Quality-Max/qualitymax-github-action@v1
         with:
           api-key: ${{ secrets.QUALITYMAX_API_KEY }}
-          # Resolve the staging project from this linked repository.
+          project-id: '449'
           test-suite: 'all'
           browser: 'chromium'
           base-url: 'https://demo.playwright.dev/todomvc'
